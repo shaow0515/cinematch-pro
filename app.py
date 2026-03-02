@@ -78,7 +78,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
     empty_df = pd.DataFrame(columns=cols_display)
     
     if movies.empty:
-        return empty_df, {}
+        return empty_df, pd.Series(dtype=int)
 
     # Filter by rating, year, genres
     candidate_pool = movies[
@@ -91,7 +91,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
         candidate_pool = candidate_pool[candidate_pool['genres'].str.contains(pattern, case=False, na=False)]
 
     if candidate_pool.empty:
-        return empty_df, {}
+        return empty_df, pd.Series(dtype=int)
 
     results = pd.DataFrame()
 
@@ -125,14 +125,14 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
                 results = recs.head(20)
                 results['Why Shown?'] = f"Similar to: {exact_title}"
             else:
-                return empty_df, {}
+                return empty_df, pd.Series(dtype=int)
 
     results['star_rating'] = results['vote_average'].apply(make_stars)
 
     # Genre counts
     all_res_genres = results['genres'].str.split(', ').explode().dropna()
     all_res_genres = all_res_genres[all_res_genres != '']
-    genre_counts = {}
+    genre_counts = pd.Series(dtype=int)
     if not all_res_genres.empty:
         genre_counts = all_res_genres.value_counts().head(5)
 
@@ -168,7 +168,7 @@ if search_btn or search_query:
         st.warning("No movies found. Try adjusting your filters or search terms.")
     else:
         st.markdown("### 📊 Genre Breakdown in Results")
-        if genre_counts:
+        if not genre_counts.empty:  # <-- FIXED
             st.bar_chart(genre_counts)
 
         st.markdown("### 🍿 Results")
