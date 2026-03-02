@@ -4,6 +4,7 @@
 import streamlit as st
 import pandas as pd
 import difflib
+import ast
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 
@@ -30,12 +31,28 @@ def load_data():
             if col not in df.columns: df[col] = ''
             else: df[col] = df[col].fillna('')
 
+        # --- CLEAN CREDITS: extract actor/director names ---
+        def extract_names(credit_str):
+            try:
+                items = ast.literal_eval(credit_str)
+                names = [i.get('name','') for i in items if isinstance(i, dict)]
+                return ', '.join(names)
+            except:
+                return ''
+
+        df['credits'] = df['credits'].apply(extract_names)
+
+        # --- CLEAN GENRES ---
+        df['genres'] = df['genres'].str.replace('[','').str.replace(']','').str.replace("'", "")
+
+        # --- CREATE CONTENT FEATURES ---
         df['content_features'] = (
             (df['title'] + " ") * 2 +
             (df['genres'] + " ") * 1 +
             (df['credits'] + " ") * 2 +
             df['overview']
         )
+
         return df.reset_index(drop=True)
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -84,6 +101,7 @@ def get_recommendations(search_query, min_rating, selected_genres, start_year, e
         results = candidate_pool.sort_values('vote_average', ascending=False).head(20).copy()
         results['Why Shown?'] = "🔥 Top Rated"
     else:
+        # --- search in content features (title, actor, director, overview, genres) ---
         mask = candidate_pool['content_features'].str.lower().str.contains(search_query.lower())
         keyword_matches = candidate_pool[mask].sort_values('vote_average', ascending=False).copy()
 
@@ -91,6 +109,7 @@ def get_recommendations(search_query, min_rating, selected_genres, start_year, e
             results = keyword_matches.head(20)
             results['Why Shown?'] = f"Found match: '{search_query}'"
         else:
+            # --- fuzzy title match if no keyword matches ---
             all_titles = candidate_pool['title'].astype(str).tolist()
             matches = difflib.get_close_matches(search_query, all_titles, n=1, cutoff=0.4)
 
@@ -129,7 +148,7 @@ def get_recommendations(search_query, min_rating, selected_genres, start_year, e
 
 # --- 4. UI LAYOUT ---
 st.title("🎬 CineMatch Pro")
-st.markdown("Search by **Movie** or **Actor** (e.g., *Robert Downey Jr*, *Inception*).")
+st.markdown("Search by **Movie**, **Actor**, or **Director** (e.g., *Robert Downey Jr*, *Inception*).")
 
 # --- SIDEBAR FILTERS ---
 with st.sidebar:
@@ -140,7 +159,7 @@ with st.sidebar:
 
 # --- MAIN SEARCH AREA ---
 col1, col2 = st.columns([4, 1])
-search_query = col1.text_input("Search", placeholder="Type an actor or movie...", label_visibility="collapsed")
+search_query = col1.text_input("Search", placeholder="Type an actor, director, or movie...", label_visibility="collapsed")
 search_btn = col2.button("🔍 Search", use_container_width=True, type="primary")
 
 # --- RUN RECOMMENDATION ---
