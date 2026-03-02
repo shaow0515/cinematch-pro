@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""app"""
+"""CineMatch Pro - Fixed Content-Based Search"""
 
 import streamlit as st
 import pandas as pd
 import difflib
+import ast
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 
@@ -18,6 +19,7 @@ def load_data():
 
         # Ensure numeric columns
         df['vote_average'] = pd.to_numeric(df['vote_average'], errors='coerce').fillna(0)
+        df['vote_count'] = pd.to_numeric(df.get('vote_count', 0), errors='coerce').fillna(0)
         df['release_date'] = pd.to_datetime(df['release_date'], errors='coerce')
         df['year'] = df['release_date'].dt.year.fillna(0).astype(int)
 
@@ -29,13 +31,27 @@ def load_data():
             else:
                 df[col] = df[col].fillna('')
 
-        # Create content features: Title x2, Genres x1, Credits x2, Overview
+        # --- CLEAN GENRES ---
+        df['genres'] = df['genres'].astype(str).str.replace('[','').str.replace(']','').str.replace("'", "")
+
+        # --- PARSE CREDITS: extract actor/director names ---
+        def extract_names(credit_str):
+            try:
+                items = ast.literal_eval(credit_str)
+                names = [i.get('name','') for i in items if isinstance(i, dict)]
+                return ', '.join(names)
+            except:
+                return ''
+        df['credits'] = df['credits'].apply(extract_names)
+
+        # --- CREATE CONTENT FEATURES ---
         df['content_features'] = (
             (df['title'] + " ") * 2 +
             (df['genres'] + " ") * 1 +
             (df['credits'] + " ") * 2 +
             df['overview']
         )
+
         return df.reset_index(drop=True)
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -43,7 +59,7 @@ def load_data():
 
 movies = load_data()
 
-# --- 2. TRAIN AI MODEL ---
+# --- 2. TRAIN MODEL ---
 @st.cache_resource
 def train_model(data):
     if data.empty:
@@ -59,10 +75,7 @@ def make_stars(score):
     count = int(round(score))
     return "⭐" * count + f" ({score:.1f})"
 
-# Ensure 'genres' column exists
-if 'genres' not in movies.columns:
-    movies['genres'] = ''
-
+# Genres list for sidebar
 if not movies.empty:
     all_genres = sorted(list(set(movies['genres'].str.split(', ').explode().dropna())))
     if '' in all_genres: all_genres.remove('')
@@ -99,6 +112,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
         results = candidate_pool.sort_values('vote_average', ascending=False).head(20).copy()
         results['Why Shown?'] = "🔥 Top Rated"
     else:
+        # Search in content features (title, actor, director, overview, genres)
         mask = candidate_pool['content_features'].str.lower().str.contains(search_query.lower())
         keyword_matches = candidate_pool[mask].sort_values('vote_average', ascending=False).copy()
 
@@ -106,6 +120,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
             results = keyword_matches.head(20)
             results['Why Shown?'] = f"Found match: '{search_query}'"
         else:
+            # Fuzzy title match
             all_titles = candidate_pool['title'].astype(str).tolist()
             matches = difflib.get_close_matches(search_query, all_titles, n=1, cutoff=0.4)
             if matches:
@@ -140,7 +155,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
 
 # --- 5. UI LAYOUT ---
 st.title("🎬 CineMatch Pro")
-st.markdown("Search by **Movie** or **Actor** (e.g., *Robert Downey Jr*, *Inception*).")
+st.markdown("Search by **Movie**, **Actor**, or **Director** (e.g., *Robert Downey Jr*, *Inception*).")
 
 with st.sidebar:
     st.header("⚙️ Filters")
@@ -149,7 +164,7 @@ with st.sidebar:
     selected_genres = st.multiselect("Genre", all_genres)
 
 col1, col2 = st.columns([4, 1])
-search_query = col1.text_input("Search", placeholder="Type an actor or movie...", label_visibility="collapsed")
+search_query = col1.text_input("Search", placeholder="Type an actor, director, or movie...", label_visibility="collapsed")
 search_btn = col2.button("🔍 Search", use_container_width=True, type="primary")
 
 # --- 6. RUN CONTENT-BASED SEARCH ---
@@ -168,7 +183,7 @@ if search_btn or search_query:
         st.warning("No movies found. Try adjusting your filters or search terms.")
     else:
         st.markdown("### 📊 Genre Breakdown in Results")
-        if not genre_counts.empty:  # <-- FIXED
+        if not genre_counts.empty:
             st.bar_chart(genre_counts)
 
         st.markdown("### 🍿 Results")
