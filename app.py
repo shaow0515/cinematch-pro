@@ -16,10 +16,12 @@ def load_data():
     try:
         df = pd.read_csv('movies_lite.csv', on_bad_lines='skip')
 
+        # Ensure numeric columns
         df['vote_average'] = pd.to_numeric(df['vote_average'], errors='coerce').fillna(0)
         df['release_date'] = pd.to_datetime(df['release_date'], errors='coerce')
         df['year'] = df['release_date'].dt.year.fillna(0).astype(int)
 
+        # Ensure text columns exist
         text_cols = ['genres', 'overview', 'title', 'credits']
         for col in text_cols:
             if col not in df.columns:
@@ -27,7 +29,7 @@ def load_data():
             else:
                 df[col] = df[col].fillna('')
 
-        # Create Search Soup: Title x2, Genres x1, Credits x2, Overview
+        # Create content features: Title x2, Genres x1, Credits x2, Overview
         df['content_features'] = (
             (df['title'] + " ") * 2 +
             (df['genres'] + " ") * 1 +
@@ -41,10 +43,11 @@ def load_data():
 
 movies = load_data()
 
-# --- 2. TRAIN AI ---
+# --- 2. TRAIN AI MODEL ---
 @st.cache_resource
 def train_model(data):
-    if data.empty: return None
+    if data.empty:
+        return None
     tfidf = TfidfVectorizer(stop_words='english')
     tfidf_matrix = tfidf.fit_transform(data['content_features'])
     return linear_kernel(tfidf_matrix, tfidf_matrix)
@@ -56,13 +59,20 @@ def make_stars(score):
     count = int(round(score))
     return "⭐" * count + f" ({score:.1f})"
 
-all_genres = sorted(list(set(movies['genres'].str.split(', ').explode().dropna())))
-if '' in all_genres: all_genres.remove('')
+# Ensure 'genres' column exists
+if 'genres' not in movies.columns:
+    movies['genres'] = ''
+
+if not movies.empty:
+    all_genres = sorted(list(set(movies['genres'].str.split(', ').explode().dropna())))
+    if '' in all_genres: all_genres.remove('')
+else:
+    all_genres = []
 
 min_year_data = int(movies['year'].min()) if not movies.empty else 1980
 max_year_data = int(movies['year'].max()) if not movies.empty else 2025
 
-# --- 4. CONTENT-BASED RECOMMENDATION FUNCTION ---
+# --- 4. CONTENT-BASED RECOMMENDATION ---
 def content_based_recommendations(search_query, min_rating=5, selected_genres=None, start_year=1980, end_year=2025, movies=movies, cosine_sim=cosine_sim):
     cols_display = ['title', 'year', 'star_rating', 'Why Shown?', 'genres', 'overview', 'id']
     empty_df = pd.DataFrame(columns=cols_display)
@@ -70,7 +80,7 @@ def content_based_recommendations(search_query, min_rating=5, selected_genres=No
     if movies.empty:
         return empty_df, {}
 
-    # Filter by rating, year, and genres
+    # Filter by rating, year, genres
     candidate_pool = movies[
         (movies['vote_average'] >= min_rating) &
         (movies['year'] >= start_year) &
